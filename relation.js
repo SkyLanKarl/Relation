@@ -314,14 +314,7 @@
       const note = age === 'unknown' ? '长幼未知时保留“兄弟／姐妹”；确定长幼后才能精确到兄、弟、姐、妹。' : '';
       return makeResult(path, siblingName(prefix, gender, age), '血亲', '堂表亲生成：第一代堂表亲', 'generative', note);
     }
-    return makeResult(
-      path,
-      `第${a}代${branch}亲：` + siblingName('远房' + branch, gender, age),
-      '血亲',
-      `堂表亲生成：共同祖先两侧各延伸${a}代`,
-      'generative',
-      '“第几代堂表亲”是程序用于精确说明代际的书面表述。'
-    );
+    return null;
   }
 
   function qualifiedSibling(path, age) {
