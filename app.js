@@ -745,7 +745,8 @@
     const genuinelyNewIds = newIds.filter(id => !snapshot[id]);
     genuinelyNewIds.forEach((id, index) => {
       const spread = genuinelyNewIds.length > 1 ? (index === 0 ? -COLUMN_GAP / 2 : COLUMN_GAP / 2) : 0;
-      const x = findOpenX(anchorX + spread, occupiedPositions);
+      const sameRowPositions = occupiedPositions.filter(position => position.y === layout.positions[id].y);
+      const x = findOpenX(anchorX + spread, sameRowPositions);
       state.people[id].offsetX = x - layout.positions[id].x;
       occupiedPositions.push({ x, y: layout.positions[id].y });
     });
