@@ -229,7 +229,12 @@
     return prefix + '姐妹';
   }
 
-  function makeResult(path, title, category, method, confidence, note = '') {
+  function makeResult(path, title, category, method, confidence, note = '', baseScore) {
+    const defaultScores = { exact: 100, generative: 80, structural: 50 };
+    let score = baseScore ?? defaultScores[confidence] ?? 0;
+    if (/兄弟|姐妹/.test(title)) score -= 50;
+    if (/第[0-9]+代|远房|隔代|目标比本人|上溯[0-9]+代|下延[0-9]+代/.test(title)) score -= 90;
+    if (title.includes('结构称谓：')) score = Math.min(score, 60);
     return {
       path: pathKey(path),
       structural: structural(path),
@@ -237,6 +242,7 @@
       category,
       method,
       confidence,
+      score: Math.max(0, score),
       note
     };
   }
@@ -336,7 +342,7 @@
     const spouseWord = path[0] === '夫' ? '丈夫' : '妻子';
     return makeResult(
       path,
-      `${spouseWord}的${sub.title}`,
+      `${spouseWord}的${sub.title.replace(/^结构称谓：(?:我的)?/, '')}`,
       '姻亲',
       '姻亲生成：配偶一侧关系递归',
       'generative',
@@ -364,7 +370,7 @@
     const word = path[path.length - 1] === '夫' ? '丈夫' : '妻子';
     return makeResult(
       path,
-      `${sub.title}的${word}`,
+      `${sub.title.replace(/^结构称谓：(?:我的)?/, '')}的${word}`,
       classify(path),
       '姻亲生成：亲属＋配偶',
       'generative',
@@ -373,20 +379,7 @@
   }
 
   function fallback(path, age, depth) {
-    for (let length = path.length - 1; length > 0; length -= 1) {
-      const nearest = calculatePath(path.slice(0, length), age, depth + 1);
-      if (nearest.confidence === 'structural' || nearest.title.startsWith('结构称谓：')) continue;
-      const suffix = path.slice(length).map(step => RELATION_LABELS[step]).join('的');
-      return makeResult(
-        path,
-        `结构称谓：${nearest.title}的${suffix}`,
-        classify(path),
-        '结构生成：最近亲属节点延伸',
-        'structural',
-        '未命中稳定书面专名，已从最近的可识别亲属节点生成结构称谓。'
-      );
-    }
-    return makeResult(
+    let best = makeResult(
       path,
       '结构称谓：' + structural(path),
       classify(path),
@@ -394,18 +387,39 @@
       'structural',
       '该关系可以准确描述，但没有足够稳定的统一书面专名。'
     );
+    for (let length = path.length - 1; length > 0; length -= 1) {
+      const nearest = calculatePath(path.slice(0, length), age, depth + 1);
+      if (nearest.confidence === 'structural' || nearest.title.startsWith('结构称谓：')) continue;
+      const suffix = path.slice(length).map(step => RELATION_LABELS[step]).join('的');
+      const candidate = makeResult(
+        path,
+        `结构称谓：${nearest.title}的${suffix}`,
+        classify(path),
+        '结构生成：最近亲属节点延伸',
+        'structural',
+        '未命中稳定书面专名，已从最近的可识别亲属节点生成结构称谓。',
+        60
+      );
+      if (candidate.score > best.score) best = candidate;
+    }
+    return best;
   }
 
   function calculatePath(path, age = 'unknown', depth = 0) {
     if (!path.length) throw new Error('关系链不能为空。');
     if (depth > 10000) throw new Error('关系链递归过深。');
-    const rule = RULES.get(pathKey(path));
-    if (rule) return makeResult(path, rule.title, classify(path), '常用关系精确规则', 'exact', rule.note);
+    const cacheKey = `${age}|${pathKey(path)}`;
+    if (resultCache.has(cacheKey)) return resultCache.get(cacheKey);
 
-    let result = linealUp(path) || linealDown(path) || qualifiedSibling(path, age) || cousin(path, age);
-    if (result) return result;
-    result = spouseExtension(path, age, depth) || cousinHusband(path, age) || spouseOfRelative(path, age, depth);
-    return result || fallback(path, age, depth);
+    const rule = RULES.get(pathKey(path));
+    let result = rule
+      ? makeResult(path, rule.title, classify(path), '常用关系精确规则', 'exact', rule.note)
+      : linealUp(path) || linealDown(path) || qualifiedSibling(path, age) || cousin(path, age);
+    if (!result) result = spouseExtension(path, age, depth) || cousinHusband(path, age) || spouseOfRelative(path, age, depth);
+    const nearest = fallback(path, age, depth);
+    if (!result || nearest.score > result.score) result = nearest;
+    resultCache.set(cacheKey, result);
+    return result;
   }
 
   function calculate(textOrPath, age = 'unknown') {
