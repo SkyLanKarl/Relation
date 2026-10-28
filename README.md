@@ -32,4 +32,4 @@ python -m http.server 8000
 - `app.js`：亲缘树和页面交互。
 - `relation.js`：亲属称谓计算。
 
-网页通过 GitHub Pages 自动部署。
+网页通过 GitHub Actions 自动部署到 GitHub Pages。
