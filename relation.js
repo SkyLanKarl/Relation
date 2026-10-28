@@ -229,12 +229,20 @@
     return prefix + '姐妹';
   }
 
-  function makeResult(path, title, category, method, confidence, note = '', baseScore) {
-    const defaultScores = { exact: 100, generative: 80, structural: 50 };
-    let score = baseScore ?? defaultScores[confidence] ?? 0;
-    if (/兄弟|姐妹/.test(title)) score -= 50;
-    if (/第[0-9]+代|远房|隔代|目标比本人|上溯[0-9]+代|下延[0-9]+代/.test(title)) score -= 90;
-    if (title.includes('结构称谓：')) score = Math.min(score, 60);
+  function generationScore(path) {
+    let generation = 0;
+    for (const step of path) {
+      if (PARENTS.has(step)) generation += 1;
+      else if (CHILDREN.has(step)) generation -= 1;
+    }
+    return Math.abs(generation);
+  }
+
+  function isLowValueTitle(title) {
+    return /兄弟|姐妹|第[0-9]+代|远房|隔代|目标比本人|上溯[0-9]+代|下延[0-9]+代/.test(title);
+  }
+
+  function makeResult(path, title, category, method, confidence, note = '', score = generationScore(path)) {
     return {
       path: pathKey(path),
       structural: structural(path),
@@ -242,7 +250,7 @@
       category,
       method,
       confidence,
-      score: Math.max(0, score),
+      score,
       note
     };
   }
@@ -385,20 +393,21 @@
       classify(path),
       '任意链结构推导',
       'structural',
-      '该关系可以准确描述，但没有足够稳定的统一书面专名。'
+      '该关系可以准确描述，但没有足够稳定的统一书面专名。',
+      -1
     );
     for (let length = path.length - 1; length > 0; length -= 1) {
       const nearest = calculatePath(path.slice(0, length), age, depth + 1);
-      if (nearest.confidence === 'structural' || nearest.title.startsWith('结构称谓：')) continue;
+      if (nearest.confidence === 'structural' || isLowValueTitle(nearest.title)) continue;
       const suffix = path.slice(length).map(step => RELATION_LABELS[step]).join('的');
       const candidate = makeResult(
         path,
         `结构称谓：${nearest.title}的${suffix}`,
         classify(path),
-        '结构生成：最近亲属节点延伸',
+        '结构生成：按辈分贪心选择最近亲属节点',
         'structural',
-        '未命中稳定书面专名，已从最近的可识别亲属节点生成结构称谓。',
-        60
+        '按跨越辈分数选择最大的已知亲属节点，再补齐剩余关系。',
+        nearest.score
       );
       if (candidate.score > best.score) best = candidate;
     }
@@ -416,8 +425,7 @@
       ? makeResult(path, rule.title, classify(path), '常用关系精确规则', 'exact', rule.note)
       : linealUp(path) || linealDown(path) || qualifiedSibling(path, age) || cousin(path, age);
     if (!result) result = spouseExtension(path, age, depth) || cousinHusband(path, age) || spouseOfRelative(path, age, depth);
-    const nearest = fallback(path, age, depth);
-    if (!result || nearest.score > result.score) result = nearest;
+    if (!result || isLowValueTitle(result.title)) result = fallback(path, age, depth);
     resultCache.set(cacheKey, result);
     return result;
   }
