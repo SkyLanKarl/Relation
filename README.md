@@ -31,6 +31,5 @@ python -m http.server 8000
 - `styles.css`：页面样式。
 - `app.js`：亲缘树和页面交互。
 - `relation.js`：亲属称谓计算。
-- `亲属关系计算器.py`：命令行版本计算器。
 
 网页通过 GitHub Pages 自动部署。
