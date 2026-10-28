@@ -33,4 +33,4 @@ python -m http.server 8000
 - `relation.js`：亲属称谓计算。
 - `亲属关系计算器.py`：命令行版本计算器。
 
-网页通过 GitHub Actions 自动部署到 GitHub Pages。
+网页通过 GitHub Pages 自动部署。
