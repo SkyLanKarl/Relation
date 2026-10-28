@@ -121,6 +121,8 @@ h1 span { color: var(--terracotta); }
   background-size: 23px 23px;
   scrollbar-width: thin;
   scrollbar-color: #d8d0c3 transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .tree-viewport:focus-visible { outline: 2px solid var(--terracotta); outline-offset: -3px; }
 .tree-viewport::-webkit-scrollbar { width: 7px; height: 7px; }
@@ -128,8 +130,10 @@ h1 span { color: var(--terracotta); }
 .tree-canvas { position: relative; min-width: 100%; min-height: 100%; }
 .tree-zoom-layer { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
 .tree-lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.kinship-link { fill: none; stroke: #d3c8b8; stroke-width: 1.6; }
+.kinship-link { fill: none; stroke: #d3c8b8; stroke-width: 1.6; transition: stroke .18s, stroke-width .18s; }
+.kinship-link.is-lineage { stroke: #c9835f; stroke-width: 2.7; filter: drop-shadow(0 1px 2px rgba(185, 112, 75, .18)); }
 .kinship-link-dot { fill: #c5b6a2; stroke: #fcfbf7; stroke-width: 2px; }
+.kinship-link-dot.is-lineage { fill: #c9835f; stroke: #fff3e8; }
 
 .person-card {
   --person-color: var(--sage);
@@ -155,6 +159,7 @@ h1 span { color: var(--terracotta); }
 .person-card.gender-female { --person-color: var(--female); --person-soft: var(--female-soft); }
 .person-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--person-color) 45%, #e8e1d6); box-shadow: 0 9px 22px rgba(81, 68, 47, .1); }
 .person-card.is-selected { border-color: var(--person-color); box-shadow: 0 0 0 3px var(--person-soft), 0 9px 22px rgba(81, 68, 47, .09); }
+.person-card.is-lineage:not(.is-selected) { border-color: #d9a47f; background: #fff8ef; box-shadow: 0 6px 18px rgba(185, 112, 75, .1); }
 .person-card.is-self::after { content: "起点"; position: absolute; top: -8px; right: 12px; padding: 2px 7px; color: #fff; background: var(--sage); border-radius: 6px; font-size: 8px; letter-spacing: 1px; }
 .person-card:focus-visible { outline: 3px solid color-mix(in srgb, var(--person-color) 45%, transparent); outline-offset: 3px; }
 .person-avatar { width: 35px; height: 35px; display: grid; place-items: center; margin-bottom: 7px; border-radius: 50%; color: var(--person-color); background: var(--person-soft); font-family: var(--serif); font-size: 16px; font-weight: 600; }

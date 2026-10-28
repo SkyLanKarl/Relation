@@ -163,99 +163,6 @@
     return codes.map(code => labels[code]).join('的');
   }
 
-  function graphSpecificTitle(codes) {
-    const parents = new Set(['父', '母', '继父', '继母']);
-    const children = new Set(['子', '女', '继子', '继女']);
-    if (codes.length === 2 && parents.has(codes[0]) && children.has(codes[1])) {
-      const hasStep = [...parents, ...children].some(code => codes.includes(code) && code.startsWith('继'));
-      const sibling = codes[1].endsWith('子') ? '兄弟' : '姐妹';
-      return hasStep ? `继${sibling}` : sibling;
-    }
-    if (codes.length === 3 && ['父', '母'].includes(codes[0]) && ['父', '母'].includes(codes[1]) && ['子', '女'].includes(codes[2])) {
-      if (codes[2] === '女') return codes[0] === '父' ? '姑母' : '姨母';
-      return codes[0] === '父' ? '伯父 / 叔父' : '舅父';
-    }
-    return null;
-  }
-
-  function canonicalCodes(codes) {
-    const parents = new Set(['父', '母']);
-    const children = new Set(['子', '女']);
-    const canonical = [];
-    for (let index = 0; index < codes.length; index += 1) {
-      const current = codes[index];
-      const next = codes[index + 1];
-      if (next && parents.has(current) && children.has(next)) {
-        canonical.push(next === '子' ? '兄' : '姐');
-        index += 1;
-      } else if (next && children.has(current) && parents.has(next)) {
-        canonical.push(next === '父' ? '夫' : '妻');
-        index += 1;
-      } else {
-        canonical.push(current);
-      }
-    }
-    const siblings = new Set(['兄', '弟', '姐', '妹']);
-    const simplified = [];
-    for (const code of canonical) {
-      if (parents.has(code) && simplified.length >= 2 && siblings.has(simplified[simplified.length - 1]) && parents.has(simplified[simplified.length - 2])) {
-        simplified.pop();
-        simplified.push(code);
-      } else if (parents.has(code) && simplified.length === 1 && siblings.has(simplified[0])) {
-        simplified[0] = code;
-      } else {
-        simplified.push(code);
-      }
-    }
-    return simplified;
-  }
-
-  function extendedGraphTitle(codes) {
-    const parents = new Set(['父', '母']);
-    const siblings = new Set(['兄', '弟', '姐', '妹']);
-    const children = new Set(['子', '女']);
-    if (codes.length === 4 && parents.has(codes[0]) && siblings.has(codes[1]) && children.has(codes[2])) {
-      const branch = codes[0] === '父' && ['兄', '弟'].includes(codes[1]) ? '堂' : '表';
-      if (codes[3] === '夫') return `${branch}姐夫 / ${branch}妹夫`;
-      if (children.has(codes[3])) {
-        const stem = codes[2] === '子'
-          ? (codes[3] === '子' ? '侄' : '侄女')
-          : (codes[3] === '子' ? '外甥' : '外甥女');
-        return `${branch}${stem}`;
-      }
-    }
-    if (codes.length === 5 && parents.has(codes[0]) && siblings.has(codes[1]) && codes[2] === '女' && codes[3] === '夫' && parents.has(codes[4])) {
-      const branch = codes[0] === '父' && ['兄', '弟'].includes(codes[1]) ? '堂' : '表';
-      return `${branch}姐妹夫的${codes[4] === '父' ? '父亲' : '母亲'}`;
-    }
-    if (codes.length === 4 && parents.has(codes[0]) && parents.has(codes[1]) && siblings.has(codes[2]) && children.has(codes[3])) {
-      const branch = codes[0] === '父' && codes[1] === '父' && ['兄', '弟'].includes(codes[2]) ? '堂' : '表';
-      return `${branch}${codes[3] === '子' ? '舅' : '姨'}`;
-    }
-    return null;
-  }
-
-  function formatTitle(title) {
-    const commonTitles = {
-      父亲: '爸爸', 母亲: '妈妈', 祖父: '爷爷', 祖母: '奶奶',
-      外祖父: '外公', 外祖母: '外婆', 姑母: '姑妈', 舅父: '舅舅', 姨母: '姨妈'
-    };
-    if (commonTitles[title]) return commonTitles[title];
-    if (title.startsWith('结构称谓：我的')) return title.slice(7);
-    if (title.startsWith('结构称谓：')) return title.slice(5);
-    return title.replace(/^(?:姑表|舅表|姨表)(兄弟|姐妹)$/, '表$1');
-  }
-
-  function calculateTitle(codes) {
-    const specificTitle = graphSpecificTitle(codes);
-    if (specificTitle) return formatTitle(specificTitle);
-    const canonical = canonicalCodes(codes);
-    const extendedTitle = extendedGraphTitle(canonical);
-    if (extendedTitle) return formatTitle(extendedTitle);
-    const result = window.KinshipCalculator.calculate(canonical, 'unknown');
-    return formatTitle(result.title);
-  }
-
   function calculatePathTitle(path) {
     const containsSelf = path.slice(1).includes('self');
     const genders = containsSelf && state.people.self.gender === 'unknown'
@@ -265,7 +172,7 @@
     for (const gender of genders) {
       const codes = pathToCodes(path, gender);
       if (!codes) continue;
-      const title = calculateTitle(codes);
+      const title = window.KinshipCalculator.calculate(codes, 'unknown').title.replace(/^结构称谓：/, '');
       if (!titles.includes(title)) titles.push(title);
     }
     return titles.slice(0, 3).join(' / ');
@@ -442,6 +349,21 @@
   }
 
   let renderedPositions = {};
+  let lineagePersonIds = new Set();
+  let lineageEdgeKeys = new Set();
+
+  function updateLineageHighlight() {
+    const path = findPath(state.selectedId) || ['self'];
+    lineagePersonIds = new Set(path);
+    lineageEdgeKeys = new Set();
+    for (let index = 1; index < path.length; index += 1) {
+      const current = state.people[path[index - 1]];
+      const next = state.people[path[index]];
+      const parentId = current.parents.includes(next.id) ? next.id : current.id;
+      const childId = parentId === next.id ? current.id : next.id;
+      lineageEdgeKeys.add(`${parentId}:${childId}`);
+    }
+  }
 
   function renderConnections(positions) {
     const pathParts = [];
@@ -465,13 +387,17 @@
       const childCenters = children.map(id => positions[id].x + CARD_WIDTH / 2);
       const minX = Math.min(...parentCenters, ...childCenters);
       const maxX = Math.max(...parentCenters, ...childCenters);
-      pathParts.push(`<path class="kinship-link kinship-bus" d="M ${minX} ${busY} L ${maxX} ${busY}"/>`);
+      const groupKeys = parents.flatMap(parentId => children.map(childId => `${parentId}:${childId}`));
+      const groupHighlighted = groupKeys.some(key => lineageEdgeKeys.has(key));
+      pathParts.push(`<path class="kinship-link kinship-bus${groupHighlighted ? ' is-lineage' : ''}" d="M ${minX} ${busY} L ${maxX} ${busY}"/>`);
       parents.forEach((id, index) => {
-        pathParts.push(`<path class="kinship-link" d="M ${parentCenters[index]} ${startY} L ${parentCenters[index]} ${busY}"/>`);
+        const highlighted = children.some(childId => lineageEdgeKeys.has(`${id}:${childId}`));
+        pathParts.push(`<path class="kinship-link${highlighted ? ' is-lineage' : ''}" d="M ${parentCenters[index]} ${startY} L ${parentCenters[index]} ${busY}"/>`);
       });
       children.forEach((id, index) => {
-        pathParts.push(`<path class="kinship-link" d="M ${childCenters[index]} ${busY} L ${childCenters[index]} ${endY}"/>`);
-        pathParts.push(`<circle class="kinship-link-dot" cx="${childCenters[index]}" cy="${endY - 2}" r="3"/>`);
+        const highlighted = parents.some(parentId => lineageEdgeKeys.has(`${parentId}:${id}`));
+        pathParts.push(`<path class="kinship-link${highlighted ? ' is-lineage' : ''}" d="M ${childCenters[index]} ${busY} L ${childCenters[index]} ${endY}"/>`);
+        pathParts.push(`<circle class="kinship-link-dot${highlighted ? ' is-lineage' : ''}" cx="${childCenters[index]}" cy="${endY - 2}" r="3"/>`);
       });
       for (const parentId of parents) {
         for (const childId of children) drawn.add(`${parentId}:${childId}`);
@@ -489,8 +415,9 @@
         const endX = child.x + CARD_WIDTH / 2;
         const endY = child.y;
         const middleY = (startY + endY) / 2;
-        pathParts.push(`<path class="kinship-link" d="M ${startX} ${startY} C ${startX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}"/>`);
-        pathParts.push(`<circle class="kinship-link-dot" cx="${endX}" cy="${endY - 2}" r="3"/>`);
+        const highlighted = lineageEdgeKeys.has(edgeKey);
+        pathParts.push(`<path class="kinship-link${highlighted ? ' is-lineage' : ''}" d="M ${startX} ${startY} C ${startX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}"/>`);
+        pathParts.push(`<circle class="kinship-link-dot${highlighted ? ' is-lineage' : ''}" cx="${endX}" cy="${endY - 2}" r="3"/>`);
       }
     }
     lines.innerHTML = pathParts.join('');
@@ -517,17 +444,20 @@
     lines.setAttribute('width', width);
     lines.setAttribute('height', height);
     lines.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    updateLineageHighlight();
     renderConnections(positions);
 
     nodes.innerHTML = Object.values(state.people).map(person => {
       const position = positions[person.id];
       const relationship = getRelationship(person.id).relation;
-      const hasLegacyGeneratedName = /^(?:(?:姑|舅|姨)?表(?:甥|侄)|隔代|结构称谓|父亲的|母亲的)/.test(person.name);
+      const hasLegacyGeneratedName = /^(?:(?:姑|舅|姨)?表(?:甥|侄)|隔代|结构称谓|父亲的|母亲的)/.test(person.name)
+        || (person.name.length > 12 && person.name.split('的').length >= 4)
+        || /(?:的儿子|的女儿|的父亲|的母亲){2,}/.test(person.name);
       if (person.id !== 'self' && (person.customName === false || hasLegacyGeneratedName) && relationship && relationship !== '亲人') {
         person.name = relationship.split(' / ')[0];
       }
       const selected = person.id === state.selectedId;
-      const classes = ['person-card', `gender-${person.gender}`, selected ? 'is-selected' : '', person.id === 'self' ? 'is-self' : ''].filter(Boolean).join(' ');
+      const classes = ['person-card', `gender-${person.gender}`, selected ? 'is-selected' : '', lineagePersonIds.has(person.id) ? 'is-lineage' : '', person.id === 'self' ? 'is-self' : ''].filter(Boolean).join(' ');
       return `<button type="button" class="${classes}" data-person-id="${escapeHtml(person.id)}" style="left:${position.x}px;top:${position.y}px" aria-label="${escapeHtml(person.name)}，${escapeHtml(relationship)}" aria-pressed="${selected}" title="${escapeHtml(relationship)}">
         <span class="person-avatar" aria-hidden="true">${escapeHtml(person.name.trim().charAt(0) || '家')}</span>
         <span class="person-name">${escapeHtml(person.name)}</span>
@@ -664,9 +594,12 @@
   function selectPerson(id) {
     if (!state.people[id]) return;
     state.selectedId = id;
+    updateLineageHighlight();
+    renderConnections(renderedPositions);
     for (const card of nodes.querySelectorAll('.person-card')) {
       const selected = card.dataset.personId === id;
       card.classList.toggle('is-selected', selected);
+      card.classList.toggle('is-lineage', lineagePersonIds.has(card.dataset.personId));
       card.setAttribute('aria-pressed', String(selected));
     }
     renderDetails();
@@ -714,8 +647,162 @@
     for (const person of Object.values(state.people)) person.offsetX = 0;
   }
 
+  function getBranchSide(id) {
+    if (id === 'self') return 0;
+    const path = findPath(id);
+    if (!path || path.length < 2) return 0;
+    const first = state.people[path[1]];
+    if (!state.people.self.parents.includes(first.id)) return 0;
+    return first.gender === 'male' ? -1 : 1;
+  }
+
+  function resolveGenerationOverlaps(layout, currentX) {
+    const depths = getDepths();
+    const generations = {};
+    for (const [id, depth] of Object.entries(depths)) {
+      if (!generations[depth]) generations[depth] = [];
+      generations[depth].push(id);
+    }
+    for (const generation of Object.values(generations)) {
+      generation.sort((firstId, secondId) => {
+        const sideDifference = getBranchSide(firstId) - getBranchSide(secondId);
+        return sideDifference || currentX[firstId] - currentX[secondId];
+      });
+      const originalCenter = (Math.min(...generation.map(id => currentX[id])) + Math.max(...generation.map(id => currentX[id]))) / 2;
+      let previousX = -Infinity;
+      for (const id of generation) {
+        currentX[id] = Math.max(currentX[id], previousX + COLUMN_GAP);
+        previousX = currentX[id];
+      }
+      const arrangedCenter = (Math.min(...generation.map(id => currentX[id])) + Math.max(...generation.map(id => currentX[id]))) / 2;
+      const shift = originalCenter - arrangedCenter;
+      for (const id of generation) {
+        currentX[id] += shift;
+        state.people[id].offsetX = currentX[id] - layout.positions[id].x;
+      }
+    }
+  }
+
+  function reduceConnectionCrossings(layout, currentX, verticalAnchorIds) {
+    const siblingGroups = {};
+    for (const person of Object.values(state.people)) {
+      if (person.parents.length < 2) continue;
+      const key = [...person.parents].sort().join(':');
+      if (!siblingGroups[key]) siblingGroups[key] = { parents: [...person.parents], children: [] };
+      siblingGroups[key].children.push(person.id);
+    }
+    const busEdges = new Set();
+    for (const group of Object.values(siblingGroups)) {
+      if (group.parents.length < 2 || group.children.length < 2) continue;
+      for (const parentId of group.parents) {
+        for (const childId of group.children) busEdges.add(`${parentId}:${childId}`);
+      }
+    }
+    const edges = [];
+    for (const person of Object.values(state.people)) {
+      for (const parentId of person.parents) {
+        if (!busEdges.has(`${parentId}:${person.id}`) && layout.positions[parentId]) {
+          edges.push({ parentId, childId: person.id });
+        }
+      }
+    }
+    function point(id, x, isParent) {
+      return { x: currentX[id] + CARD_WIDTH / 2, y: layout.positions[id].y + (isParent ? CARD_HEIGHT : 0) };
+    }
+    function orientation(first, second, third) {
+      return (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x);
+    }
+    function crosses(firstEdge, secondEdge) {
+      const endpoints = new Set([firstEdge.parentId, firstEdge.childId, secondEdge.parentId, secondEdge.childId]);
+      if (endpoints.size < 4) return false;
+      const firstStart = point(firstEdge.parentId, currentX[firstEdge.parentId], true);
+      const firstEnd = point(firstEdge.childId, currentX[firstEdge.childId], false);
+      const secondStart = point(secondEdge.parentId, currentX[secondEdge.parentId], true);
+      const secondEnd = point(secondEdge.childId, currentX[secondEdge.childId], false);
+      if (Math.max(Math.min(firstStart.y, firstEnd.y), Math.min(secondStart.y, secondEnd.y)) >= Math.min(Math.max(firstStart.y, firstEnd.y), Math.max(secondStart.y, secondEnd.y))) return false;
+      const firstA = orientation(firstStart, firstEnd, secondStart);
+      const firstB = orientation(firstStart, firstEnd, secondEnd);
+      const secondA = orientation(secondStart, secondEnd, firstStart);
+      const secondB = orientation(secondStart, secondEnd, firstEnd);
+      return firstA * firstB < 0 && secondA * secondB < 0;
+    }
+    function crossingScore() {
+      let score = 0;
+      for (let first = 0; first < edges.length; first += 1) {
+        for (let second = first + 1; second < edges.length; second += 1) {
+          if (crosses(edges[first], edges[second])) score += 1;
+        }
+      }
+      return score;
+    }
+    const depths = getDepths();
+    const generations = {};
+    for (const [id, depth] of Object.entries(depths)) {
+      if (!generations[depth]) generations[depth] = [];
+      generations[depth].push(id);
+    }
+    const protectedIds = new Set(verticalAnchorIds);
+    for (const id of verticalAnchorIds) {
+      for (const parentId of state.people[id].parents) protectedIds.add(parentId);
+    }
+    let score = crossingScore();
+    for (let iteration = 0; iteration < 6; iteration += 1) {
+      let improved = false;
+      for (const generation of Object.values(generations)) {
+        generation.sort((firstId, secondId) => currentX[firstId] - currentX[secondId]);
+        for (let index = 0; index < generation.length - 1; index += 1) {
+          const firstId = generation[index];
+          const secondId = generation[index + 1];
+          if (protectedIds.has(firstId) || protectedIds.has(secondId) || getBranchSide(firstId) !== getBranchSide(secondId)) continue;
+          [currentX[firstId], currentX[secondId]] = [currentX[secondId], currentX[firstId]];
+          const nextScore = crossingScore();
+          if (nextScore < score) {
+            score = nextScore;
+            improved = true;
+          } else {
+            [currentX[firstId], currentX[secondId]] = [currentX[secondId], currentX[firstId]];
+          }
+        }
+      }
+      if (!improved) break;
+    }
+    for (const id of Object.keys(currentX)) state.people[id].offsetX = currentX[id] - layout.positions[id].x;
+  }
+
+  function applyFamilyAlignment() {
+    const layout = calculateLayout();
+    const depths = getDepths();
+    const currentX = Object.fromEntries(Object.entries(layout.positions).map(([id, position]) => [id, position.x]));
+    const groups = {};
+    for (const person of Object.values(state.people)) {
+      if (!person.parents.length || person.parents.some(id => !layout.positions[id])) continue;
+      const key = [...person.parents].sort().join(':');
+      if (!groups[key]) groups[key] = { parentIds: [...person.parents], children: [] };
+      groups[key].children.push(person.id);
+    }
+    const orderedGroups = Object.values(groups).sort((first, second) => {
+      const firstDepth = Math.min(...first.children.map(id => depths[id]));
+      const secondDepth = Math.min(...second.children.map(id => depths[id]));
+      return secondDepth - firstDepth;
+    });
+    const verticalAnchorIds = new Set();
+    for (const group of orderedGroups) {
+      const parentCenter = group.parentIds.reduce((total, id) => total + currentX[id], 0) / group.parentIds.length;
+      group.children.sort((firstId, secondId) => layout.positions[firstId].x - layout.positions[secondId].x);
+      if (group.children.length) verticalAnchorIds.add(group.children[0]);
+      group.children.forEach((id, index) => {
+        const offset = index === 0 ? 0 : (index % 2 === 1 ? Math.ceil(index / 2) : -Math.ceil(index / 2)) * COLUMN_GAP;
+        currentX[id] = parentCenter + offset;
+        state.people[id].offsetX = currentX[id] - layout.positions[id].x;
+      });
+    }
+    resolveGenerationOverlaps(layout, currentX);
+    reduceConnectionCrossings(layout, currentX, verticalAnchorIds);
+  }
+
   function autoArrangeTree() {
     resetManualOffsets();
+    applyFamilyAlignment();
     saveState();
     renderTree(state.selectedId);
     showToast('已自动整理卡片位置与连线');
@@ -736,20 +823,35 @@
   function preserveStructureForNewPeople(snapshot, newIds, anchorId) {
     const layout = calculateLayout();
     const occupiedPositions = [];
+    const placedX = {};
     for (const [id, position] of Object.entries(snapshot)) {
       if (!state.people[id] || !layout.positions[id]) continue;
       state.people[id].offsetX = position.x - layout.positions[id].x;
       occupiedPositions.push({ x: position.x, y: layout.positions[id].y });
+      placedX[id] = position.x;
     }
-    const anchorX = snapshot[anchorId] ? snapshot[anchorId].x : layout.positions[anchorId].x;
+    const selected = state.people[anchorId];
+    const newParentIds = newIds.filter(id => selected.parents.includes(id));
+    const existingCoParentId = selected.parents.find(id => snapshot[id] && !newParentIds.includes(id));
+    const placementAnchorId = newParentIds.length === 1 && existingCoParentId ? existingCoParentId : anchorId;
+    const anchorX = snapshot[placementAnchorId] ? snapshot[placementAnchorId].x : layout.positions[placementAnchorId].x;
     const genuinelyNewIds = newIds.filter(id => !snapshot[id]);
     genuinelyNewIds.forEach((id, index) => {
-      const spread = genuinelyNewIds.length > 1 ? (index === 0 ? -COLUMN_GAP / 2 : COLUMN_GAP / 2) : 0;
+      let spread = genuinelyNewIds.length > 1 ? (index === 0 ? -COLUMN_GAP / 2 : COLUMN_GAP / 2) : 0;
+      if (placementAnchorId !== anchorId && genuinelyNewIds.length === 1) spread = COLUMN_GAP;
       const sameRowPositions = occupiedPositions.filter(position => position.y === layout.positions[id].y);
       const x = findOpenX(anchorX + spread, sameRowPositions);
       state.people[id].offsetX = x - layout.positions[id].x;
       occupiedPositions.push({ x, y: layout.positions[id].y });
+      placedX[id] = x;
     });
+    if (newParentIds.length && selected.parents.length >= 2) {
+      const parentXs = selected.parents.map(id => placedX[id]).filter(Number.isFinite);
+      if (parentXs.length === selected.parents.length) {
+        const childX = parentXs.reduce((total, x) => total + x, 0) / parentXs.length;
+        selected.offsetX = childX - layout.positions[anchorId].x;
+      }
+    }
   }
 
   function addParents() {

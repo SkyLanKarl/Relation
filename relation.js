@@ -5,14 +5,14 @@
   const BIO_PARENTS = new Set(['父', '母']);
   const CHILDREN = new Set(['子', '女', '养子', '养女', '继子', '继女']);
   const BIO_CHILDREN = new Set(['子', '女']);
-  const SIBLINGS = new Set(['兄', '弟', '姐', '妹']);
-  const MALE_SIBLINGS = new Set(['兄', '弟']);
+  const SIBLINGS = new Set(['兄', '弟', '姐', '妹', '兄弟', '姐妹']);
+  const MALE_SIBLINGS = new Set(['兄', '弟', '兄弟']);
   const SPOUSES = new Set(['夫', '妻']);
   const AGES = new Set(['older', 'younger', 'unknown']);
 
   const RELATION_LABELS = {
     父: '父亲', 母: '母亲', 夫: '丈夫', 妻: '妻子',
-    兄: '哥哥', 弟: '弟弟', 姐: '姐姐', 妹: '妹妹',
+    兄: '哥哥', 弟: '弟弟', 姐: '姐姐', 妹: '妹妹', 兄弟: '兄弟', 姐妹: '姐妹',
     子: '儿子', 女: '女儿',
     养父: '养父', 养母: '养母', 继父: '继父', 继母: '继母',
     养兄: '养兄', 养弟: '养弟', 养姐: '养姐', 养妹: '养妹',
@@ -182,8 +182,58 @@
     return result;
   }
 
+  const STRUCTURAL_LABELS = {
+    ...RELATION_LABELS,
+    孙: '孙子', 孙女: '孙女', 外孙: '外孙', 外孙女: '外孙女',
+    祖父: '祖父', 祖母: '祖母', 外祖父: '外祖父', 外祖母: '外祖母'
+  };
+  function compactLineage(path, direction) {
+    const labels = [];
+    let remaining = path;
+    let includeOuter = true;
+    while (remaining.length >= 2) {
+      const count = Math.min(9, remaining.length);
+      const segment = remaining.slice(0, count);
+      const first = segment[0];
+      const last = segment[segment.length - 1];
+      const stem = direction === 'up' ? UPWARD_STEMS[count] : DOWNWARD_STEMS[count];
+      const outer = includeOuter && ((direction === 'up' && first === '母') || (direction === 'down' && first === '女')) ? '外' : '';
+      let title = outer + stem;
+      if (direction === 'down' && last.endsWith('女')) title += '女';
+      if (direction === 'down' && last.endsWith('子') && count === 2 && !outer) title += '子';
+      if (direction === 'up' && last.endsWith('母')) {
+        title = stem === '鼻祖' ? title + '（女性）' : outer + stem.slice(0, -1) + '母';
+      }
+      labels.push(title);
+      remaining = remaining.slice(count);
+      includeOuter = false;
+    }
+    if (remaining.length) labels.push(STRUCTURAL_LABELS[remaining[0]]);
+    return labels;
+  }
+
   function structural(path) {
-    return '我的' + path.map(step => RELATION_LABELS[step]).join('的');
+    const compacted = [];
+    let index = 0;
+    while (index < path.length) {
+      const step = path[index];
+      const direction = PARENTS.has(step) ? 'up' : CHILDREN.has(step) ? 'down' : null;
+      if (!direction) {
+        compacted.push(STRUCTURAL_LABELS[step]);
+        index += 1;
+        continue;
+      }
+      let end = index + 1;
+      while (end < path.length && (direction === 'up' ? PARENTS.has(path[end]) : CHILDREN.has(path[end]))) end += 1;
+      const run = path.slice(index, end);
+      const biological = direction === 'up'
+        ? run.every(item => BIO_PARENTS.has(item))
+        : run.every(item => BIO_CHILDREN.has(item));
+      if (biological) compacted.push(...compactLineage(run, direction));
+      else compacted.push(...run.map(item => STRUCTURAL_LABELS[item]));
+      index = end;
+    }
+    return '我的' + compacted.join('的');
   }
 
   function classify(path) {
@@ -240,6 +290,10 @@
 
   function isLowValueTitle(title) {
     return /兄弟|姐妹|第[0-9]+代|远房|隔代|目标比本人|上溯[0-9]+代|下延[0-9]+代/.test(title);
+  }
+
+  function isStableGenericTitle(title) {
+    return /^(?:堂|表|姑表|舅表|姨表)(?:兄弟|姐妹)$/.test(title);
   }
 
   function makeResult(path, title, category, method, confidence, note = '', score = generationScore(path)) {
@@ -305,6 +359,22 @@
     );
   }
 
+  function directUncle(path, age) {
+    if (path.length !== 3 || !BIO_PARENTS.has(path[0]) || !BIO_PARENTS.has(path[1]) || !BIO_CHILDREN.has(path[2])) return null;
+    const paternal = path[0] === '父';
+    if (path[2] === '女') return makeResult(path, paternal ? '姑母' : '姨母', '血亲', '父母的姐妹', 'exact');
+    if (!paternal) return makeResult(path, '舅父', '血亲', '母亲的兄弟', 'exact');
+    const title = age === 'older' ? '伯父' : age === 'younger' ? '叔父' : '伯父 / 叔父';
+    return makeResult(path, title, '血亲', '祖父的儿子中除父亲以外的兄弟', 'generative', '伯、叔需要依据其与父亲的长幼确定。');
+  }
+
+  function directNibling(path) {
+    if (path.length !== 3 || !BIO_PARENTS.has(path[0]) || !BIO_CHILDREN.has(path[1]) || !BIO_CHILDREN.has(path[2])) return null;
+    const last = path[2];
+    if (path[1] === '子') return makeResult(path, last === '子' ? '侄子' : '侄女', '血亲', '兄弟的子女', 'exact');
+    return makeResult(path, last === '子' ? '外甥' : '外甥女', '血亲', '姐妹的子女', 'exact');
+  }
+
   function cousin(path, age) {
     if (!path.length || !BIO_PARENTS.has(path[0])) return null;
     const split = path.findIndex(step => SIBLINGS.has(step));
@@ -313,11 +383,24 @@
     const down = path.slice(split + 1);
     if (!down.length || !up.every(step => BIO_PARENTS.has(step)) || !down.every(step => BIO_CHILDREN.has(step))) return null;
     const a = up.length;
-    if (a !== down.length) return null;
     const sibling = path[split];
     const gender = genderOfLast(path);
-    const agnatic = up.every(step => step === '父') && MALE_SIBLINGS.has(sibling) && down.slice(0, -1).every(step => step === '子');
+    const agnatic = (up.length === 1 ? up[0] === '父' : up.slice(1).every(step => step === '父')) && MALE_SIBLINGS.has(sibling);
     const branch = agnatic ? '堂' : '表';
+    if (a === 1 && down.length === 2) {
+      const stem = down[0] === '子'
+        ? (gender === 'male' ? '侄' : '侄女')
+        : (gender === 'male' ? '甥' : '甥女');
+      return makeResult(path, branch + stem, '血亲', '堂表亲子女：按堂表亲本人性别区分侄甥', 'generative');
+    }
+    if (a === 2 && down.length === 1) {
+      const paternal = up[0] === '父';
+      const title = gender === 'male'
+        ? (paternal ? `${branch}伯 / ${branch}叔` : `${branch}舅`)
+        : (paternal ? `${branch}姑` : `${branch}姨`);
+      return makeResult(path, title, '血亲', '父母的堂表兄弟姐妹', 'generative', '伯、叔需要依据双方长幼进一步确定。');
+    }
+    if (a !== down.length) return null;
     if (a === 1) {
       let prefix = branch;
       if (branch === '表') {
@@ -359,16 +442,23 @@
   }
 
   function cousinHusband(path, age) {
-    if (age === 'unknown' || path.length !== 4 || path[path.length - 1] !== '夫') return null;
-    const relative = cousin(path.slice(0, -1), age);
-    if (!relative || !relative.title.endsWith(age === 'older' ? '姐' : '妹')) return null;
+    if (path.length !== 4 || path[path.length - 1] !== '夫') return null;
+    const ages = age === 'unknown' ? ['older', 'younger'] : [age];
+    const titles = [];
+    for (const candidateAge of ages) {
+      const relative = cousin(path.slice(0, -1), candidateAge);
+      if (!relative || !relative.title.endsWith(candidateAge === 'older' ? '姐' : '妹')) continue;
+      const title = relative.title + '夫';
+      if (!titles.includes(title)) titles.push(title);
+    }
+    if (!titles.length) return null;
     return makeResult(
       path,
-      relative.title + '夫',
+      titles.join(' / '),
       '姻亲',
       '姻亲生成：堂表姐妹的配偶',
       'generative',
-      `书面语也可称“${relative.title}婿”或“${relative.title}丈”。`
+      '长幼未知时同时保留姐夫与妹夫两种称谓。'
     );
   }
 
@@ -398,8 +488,9 @@
     );
     for (let length = path.length - 1; length > 0; length -= 1) {
       const nearest = calculatePath(path.slice(0, length), age, depth + 1);
-      if (nearest.confidence === 'structural' || isLowValueTitle(nearest.title)) continue;
-      const suffix = path.slice(length).map(step => RELATION_LABELS[step]).join('的');
+      const stableGeneric = isStableGenericTitle(nearest.title);
+      if (nearest.confidence === 'structural' || (isLowValueTitle(nearest.title) && !stableGeneric)) continue;
+      const suffix = structural(path.slice(length)).replace(/^我的/, '');
       const candidate = makeResult(
         path,
         `结构称谓：${nearest.title}的${suffix}`,
@@ -407,11 +498,29 @@
         '结构生成：按辈分贪心选择最近亲属节点',
         'structural',
         '按跨越辈分数选择最大的已知亲属节点，再补齐剩余关系。',
-        nearest.score
+        nearest.score + (stableGeneric ? 2 : 0)
       );
       if (candidate.score > best.score) best = candidate;
     }
     return best;
+  }
+
+  function normalizeGraphPath(path) {
+    const normalized = [];
+    for (let index = 0; index < path.length; index += 1) {
+      const current = path[index];
+      const next = path[index + 1];
+      if (next && BIO_PARENTS.has(current) && BIO_CHILDREN.has(next)) {
+        normalized.push(next === '子' ? '兄弟' : '姐妹');
+        index += 1;
+      } else if (next && BIO_CHILDREN.has(current) && BIO_PARENTS.has(next)) {
+        normalized.push(next === '父' ? '夫' : '妻');
+        index += 1;
+      } else {
+        normalized.push(current);
+      }
+    }
+    return normalized;
   }
 
   function calculatePath(path, age = 'unknown', depth = 0) {
@@ -421,11 +530,24 @@
     if (resultCache.has(cacheKey)) return resultCache.get(cacheKey);
 
     const rule = RULES.get(pathKey(path));
+    const directResult = directUncle(path, age) || directNibling(path);
+    if (!rule && !directResult) {
+      const normalized = normalizeGraphPath(path);
+      if (pathKey(normalized) !== pathKey(path)) {
+        const normalizedResult = {
+          ...calculatePath(normalized, age, depth + 1),
+          path: pathKey(path),
+          structural: structural(path)
+        };
+        resultCache.set(cacheKey, normalizedResult);
+        return normalizedResult;
+      }
+    }
     let result = rule
       ? makeResult(path, rule.title, classify(path), '常用关系精确规则', 'exact', rule.note)
-      : linealUp(path) || linealDown(path) || qualifiedSibling(path, age) || cousin(path, age);
+      : directResult || linealUp(path) || linealDown(path) || qualifiedSibling(path, age) || cousin(path, age);
     if (!result) result = spouseExtension(path, age, depth) || cousinHusband(path, age) || spouseOfRelative(path, age, depth);
-    if (!result || isLowValueTitle(result.title)) result = fallback(path, age, depth);
+    if (!result || (isLowValueTitle(result.title) && !isStableGenericTitle(result.title))) result = fallback(path, age, depth);
     resultCache.set(cacheKey, result);
     return result;
   }
